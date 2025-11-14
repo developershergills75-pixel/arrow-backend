@@ -1,109 +1,134 @@
 import express from "express";
-import fetch from "node-fetch";
 import cors from "cors";
 
 const app = express();
 app.use(cors());
-app.use(express.json());
 
-// ========================
-// GLOBAL CACHE SYSTEM
-// ========================
-let cache = {};
-const CACHE_TIME = 5000; // 5 seconds — safe, avoids rate limits
-
-async function cachedFetch(key, fetchFn) {
-    const now = Date.now();
-
-    // RETURN FROM CACHE
-    if (cache[key] && now - cache[key].time < CACHE_TIME) {
-        return cache[key].data;
-    }
-
-    try {
-        const fresh = await fetchFn();
-        cache[key] = { data: fresh, time: now };
-        return fresh;
-    } catch (err) {
-        console.error("API Error:", err);
-        return cache[key]?.data || { error: "Service temporarily unavailable" };
-    }
-}
-
-// ==========================
-// ROOT CHECK
-// ==========================
-app.get("/", (req, res) => {
-    res.send("Arrow Backend Running Successfully ✔️");
-});
-
-// ==========================
-// CRYPTO: Binance Free Web API (No key needed)
-// ==========================
-app.get("/crypto/:symbol", async (req, res) => {
-    const symbol = req.params.symbol.toUpperCase() + "USDT";
-
-    const data = await cachedFetch(`crypto_${symbol}`, async () => {
-        const url = `https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`;
-        const response = await fetch(url);
-        return await response.json();
-    });
-
-    res.json(data);
-});
-
-// ==========================
-// FOREX: TwelveData (You provided key)
-// ==========================
-const TWELVE_KEY = "cee241dad68f4eaca789faf0c0b59b39";
-
-app.get("/forex/:pair", async (req, res) => {
-    const pair = req.params.pair.toUpperCase();
-
-    const data = await cachedFetch(`forex_${pair}`, async () => {
-        const url = `https://api.twelvedata.com/price?symbol=${pair}&apikey=${TWELVE_KEY}`;
-        const response = await fetch(url);
-        return await response.json();
-    });
-
-    res.json(data);
-});
-
-// ==========================
-// GOLD / METALS: Metals API
-// ==========================
-const METALS_KEY = "l0q34s9bm33e87c62lp8wzlnd8v78vzn20nlgek1cis2w5da04n237btojxw";
-
-app.get("/gold", async (req, res) => {
-    const data = await cachedFetch("gold_price", async () => {
-        const url = `https://metals-api.com/api/latest?access_key=${METALS_KEY}&base=XAU&symbols=USD`;
-        const response = await fetch(url);
-        return await response.json();
-    });
-
-    res.json(data);
-});
-
-// ==========================
-// STOCKS / INDICES: Alpha Vantage
-// ==========================
+// ---- API KEYS ----
 const ALPHA_KEY = "XCGXY567WLNDALX3";
+const TWELVE_KEY = "cee241dad68f4eaca789faf0c0b59b39";
+const METAL_KEY = "l0q34s9bm33e87c62lp8wzlnd8v78vzn20nlgek1cis2w5da04n237btojxw";
 
-app.get("/stock/:symbol", async (req, res) => {
-    const symbol = req.params.symbol.toUpperCase();
+// ---- GLOBAL FETCH (Node 18+) ----
+// No need for node-fetch
 
-    const data = await cachedFetch(`stock_${symbol}`, async () => {
-        const url =
-            `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${ALPHA_KEY}`;
-        const response = await fetch(url);
-        return await response.json();
-    });
-
-    res.json(data);
+app.get("/", (req, res) => {
+  res.send("Arrow Backend Live");
 });
 
-// ==========================
-// SERVER LISTEN
-// ==========================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Backend running on ${PORT}`));
+
+// ----------------------
+//  CRYPTO PRICE (FREE)
+// ----------------------
+app.get("/crypto", async (req, res) => {
+  const symbol = req.query.symbol || "BTCUSDT";
+
+  try {
+    const r = await fetch(
+      `https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`
+    );
+    const data = await r.json();
+    res.json({
+      type: "crypto",
+      symbol,
+      price: data.price,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ----------------------
+//  FOREX PRICE (FREE)
+// ----------------------
+app.get("/forex", async (req, res) => {
+  const pair = req.query.pair || "EUR/USD";
+
+  try {
+    const r = await fetch(
+      `https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=${pair.split("/")[0]}&to_currency=${pair.split("/")[1]}&apikey=${ALPHA_KEY}`
+    );
+    const data = await r.json();
+
+    res.json({
+      type: "forex",
+      pair,
+      price: data["Realtime Currency Exchange Rate"]["5. Exchange Rate"],
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ----------------------
+//  GOLD / XAUUSD (FREE)
+// ----------------------
+app.get("/gold", async (req, res) => {
+  try {
+    const r = await fetch(
+      `https://metals-api.com/api/latest?access_key=${METAL_KEY}&base=USD&symbols=XAU`
+    );
+    const data = await r.json();
+
+    res.json({
+      type: "gold",
+      symbol: "XAUUSD",
+      price: Number(1 / data.rates.XAU).toFixed(2),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ----------------------
+//  STOCK PRICE (FREE)
+// ----------------------
+app.get("/stock", async (req, res) => {
+  const symbol = req.query.symbol || "AAPL";
+
+  try {
+    const r = await fetch(
+      `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${ALPHA_KEY}`
+    );
+    const data = await r.json();
+
+    res.json({
+      type: "stock",
+      symbol,
+      price: data["Global Quote"]["05. price"],
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ----------------------
+//  INDICES (FREE)
+// ----------------------
+app.get("/index", async (req, res) => {
+  const name = req.query.name || "NIFTY50";
+
+  try {
+    const r = await fetch(
+      `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${name}&apikey=${ALPHA_KEY}`
+    );
+    const data = await r.json();
+
+    res.json({
+      type: "index",
+      name,
+      price: data["Global Quote"]["05. price"],
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+app.listen(10000, () =>
+  console.log("Arrow Backend Live on port 10000")
+);
